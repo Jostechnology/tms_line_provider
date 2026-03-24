@@ -156,6 +156,7 @@ def handle_message(event):
             
         
         elif user and user['status'] == "creating_order_customer":
+            print(f"Placing order...")
             res, status = order_service.make_order(text, user_id, user['placing_order_customer'])
             if res['success'] != True:
                 if status == 400:
