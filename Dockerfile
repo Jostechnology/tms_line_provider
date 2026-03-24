@@ -1,12 +1,14 @@
-FROM python:3.9-slim
+FROM python:3.9-slim-bullseye
 
-WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install -r requirements.txt
 
-COPY . .
+WORKDIR /
+COPY . /
 
 EXPOSE 3000
 
-CMD ["gunicorn", "-c", "gunicorn_config.py", "app.app:app"]
+ENTRYPOINT ["gunicorn", "--config", "gunicorn_config.py", "--log-level", "info", "--access-logfile", "-", "wsgi:app"]

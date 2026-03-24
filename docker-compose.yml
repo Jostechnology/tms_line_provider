@@ -1,10 +1,23 @@
+version: "3.8"
+
 services:
-  line_provider:
-    build: .
+  tms-line-provider:
+    platform: linux/amd64
+    image: registry.gitlab.com/jostechnology/tms-line-provider:latest
+    container_name: tms-line-provider
+    restart: always
+    network_mode: bridge
+
     ports:
       - "3000:3000"
-    env_file:
-      - .env
+
     environment:
-      - PORT=3000
-    restart: unless-stopped
+      - CENTER_ACCESS_KEY=${CENTER_ACCESS_KEY}
+      - CENTER_URL=${CENTER_URL}
+      - LINE_SECRET=${LINE_SECRET}
+      - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
+      - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
+
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/usr/share/zoneinfo:/usr/share/zoneinfo:ro"
