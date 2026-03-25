@@ -3,13 +3,14 @@ version: "3.8"
 services:
   tms-line-provider:
     platform: linux/amd64
+    build: .
     image: registry.gitlab.com/jostechnology/tms-line-provider:latest
     container_name: tms-line-provider
     restart: always
     network_mode: bridge
 
     ports:
-      - "3000:3000"
+      - "5002:5002"
 
     environment:
       - CENTER_ACCESS_KEY=${CENTER_ACCESS_KEY}

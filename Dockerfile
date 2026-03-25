@@ -9,6 +9,6 @@ RUN python -m pip install -r requirements.txt
 WORKDIR /
 COPY . /
 
-EXPOSE 3000
+EXPOSE 5002
 
 ENTRYPOINT ["gunicorn", "--config", "gunicorn_config.py", "--log-level", "info", "--access-logfile", "-", "wsgi:app"]
