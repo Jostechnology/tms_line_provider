@@ -1,6 +1,7 @@
-from app.config import CENTER_ACCESS_KEY, LINE_CHANNEL_SECRET
+from app.config import ADMIN_TOKEN
 from functools import wraps
 from flask import request, jsonify, g
+
 
 def verify_required(f):
     @wraps(f)
@@ -22,8 +23,8 @@ def verify_required(f):
 
         if not token:
             return jsonify({"message": "Missing token"}), 401
-        
-        if token == LINE_CHANNEL_SECRET:
+
+        if token == ADMIN_TOKEN:
             g.username = "SYSTEM_CENTER"
             return f(*args, **kwargs)
         else:

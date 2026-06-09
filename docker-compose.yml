@@ -1,13 +1,18 @@
 version: "3.8"
 
 services:
+  redis:
+      image: redis:7-alpine
+      container_name: tms-redis
+      restart: always
+      ports:
+        - "6379:6379"
   tms-line-provider:
     platform: linux/amd64
     build: .
     image: registry.gitlab.com/jostechnology/tms-line-provider:latest
     container_name: tms-line-provider
     restart: always
-    network_mode: bridge
 
     ports:
       - "5002:5002"
@@ -15,9 +20,11 @@ services:
     environment:
       - CENTER_ACCESS_KEY=${CENTER_ACCESS_KEY}
       - CENTER_URL=${CENTER_URL}
-      - LINE_SECRET=${LINE_SECRET}
       - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
       - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
+      - SERVICE_BASE_URL=${SERVICE_BASE_URL}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
 
     volumes:
       - "/etc/localtime:/etc/localtime:ro"

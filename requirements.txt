@@ -17,4 +17,6 @@ Flask-Cors==5.0.0
 line-bot-sdk
 python-dotenv==1.0.1
 gunicorn
-
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.10
+redis==5.0.4
