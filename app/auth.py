@@ -1,33 +1,20 @@
+from fastapi import Header, HTTPException, status
 from app.config import ADMIN_TOKEN
-from functools import wraps
-from flask import request, jsonify, g
 
 
-def verify_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
+async def verify_required(authorization: str = Header(...)):
+    """
+    FastAPI dependency — replaces the Flask @verify_required decorator.
+    Usage: router endpoints add `_: None = Depends(verify_required)`
+    """
+    if not authorization:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
 
-        if "Authorization" in request.headers:
-            parts = request.headers["Authorization"].split(" ")
-            if len(parts) == 2 and parts[0] == "Bearer":
-                token = parts[1]
+    parts = authorization.split(" ")
+    if len(parts) == 2 and parts[0] == "Bearer":
+        token = parts[1]
+    else:
+        token = authorization
 
-        if not token:
-            try:
-                body = request.get_json(silent=True)
-                if body and "token" in body:
-                    token = body["token"]
-            except Exception:
-                pass
-
-        if not token:
-            return jsonify({"message": "Missing token"}), 401
-
-        if token == ADMIN_TOKEN:
-            g.username = "SYSTEM_CENTER"
-            return f(*args, **kwargs)
-        else:
-            return jsonify({"message": "Invalid or expired token"}), 401
-
-    return decorated
+    if token != ADMIN_TOKEN:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")

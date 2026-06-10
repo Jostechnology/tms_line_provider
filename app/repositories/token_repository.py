@@ -20,26 +20,30 @@ def get_tokens_by_company(company_id: str) -> List[LineOAToken]:
 
 def register_company_token(company_id: str, channel_secret: str, channel_access_token: str) -> tuple:
     """
-    If credentials already exist → return existing row, created=False
-    If new credentials → create new row, created=True
+    If this exact OA channel is already registered under the same company → return existing row, created=False
+    If new (different company or different credentials) → create new row, created=True
+
+    One company can have multiple OAs.
+    The same OA credentials cannot be registered twice under the same company.
     """
     with SessionLocal() as db:
-        # check if this exact OA channel is already registered
+        # Deduplicate per company — same credentials + same company = already registered
         existing = db.query(LineOAToken).filter(
-            LineOAToken.channel_secret == channel_secret,
-            LineOAToken.channel_access_token == channel_access_token
+            LineOAToken.company_id           == company_id,
+            LineOAToken.channel_secret       == channel_secret,
+            LineOAToken.channel_access_token == channel_access_token,
         ).first()
 
         if existing:
             return existing, False
 
-        # new OA — generate fresh token
+        # New OA for this company — generate fresh token
         token = _generate_token()
         new_row = LineOAToken(
             token=token,
             company_id=company_id,
             channel_secret=channel_secret,
-            channel_access_token=channel_access_token
+            channel_access_token=channel_access_token,
         )
         db.add(new_row)
         db.commit()

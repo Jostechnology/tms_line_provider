@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, String, DateTime
+from sqlalchemy import create_engine, Column, String, DateTime, Boolean, Integer, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime, timezone
 
@@ -21,6 +21,61 @@ class LineOAToken(Base):
     created_at           = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at           = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
+
+
+class RecipientLink(Base):
+    """
+    Links a customer_code to a LINE userId within a tenant.
+    oa_token references the LineOAToken the user registered through —
+    notifications are pushed back out via that same OA.
+    """
+    __tablename__ = "recipient_links"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    company_id    = Column(String, nullable=False, index=True)
+    customer_code = Column(String, nullable=True, index=True)
+    line_user_id  = Column(String, nullable=False, index=True)
+    oa_token      = Column(String, nullable=True)
+    tms_username  = Column(String, nullable=True)
+    opted_in      = Column(Boolean, nullable=False, default=True)
+    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+                           onupdate=lambda: datetime.now(timezone.utc))
+
+
+class LineTmsLink(Base):
+    """
+    Maps a TMS user ID to a LINE user ID.
+    Created when a user completes the LINE OAuth flow from TMS.
+    This is the only table the OAuth flow writes to.
+    """
+    __tablename__ = "line_tms_links"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    tms_id     = Column(String, nullable=False, unique=True, index=True)
+    line_id    = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+
+class DeliveryLog(Base):
+    """
+    Every outbound LINE push attempt, one row per attempt.
+    Captures event type, recipient, outcome, and any error detail.
+    """
+    __tablename__ = "delivery_logs"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    company_id    = Column(String, nullable=False, index=True)
+    trip_id       = Column(String, nullable=False, index=True)
+    event_type    = Column(String, nullable=False)
+    customer_code = Column(String, nullable=False)
+    line_user_id  = Column(String, nullable=True)
+    status        = Column(String, nullable=False)
+    error_detail  = Column(Text, nullable=True)
+    occurred_at   = Column(DateTime(timezone=True), nullable=False)
+    pushed_at     = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 def init_db():

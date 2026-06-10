@@ -2,30 +2,54 @@ version: "3.8"
 
 services:
   redis:
-      image: redis:7-alpine
-      container_name: tms-redis
-      restart: always
-      ports:
-        - "6379:6379"
+    image: redis:7-alpine
+    container_name: tms-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - tms-network
+
   tms-line-provider:
     platform: linux/amd64
     build: .
     image: registry.gitlab.com/jostechnology/tms-line-provider:latest
     container_name: tms-line-provider
     restart: always
-
     ports:
       - "5002:5002"
-
     environment:
       - CENTER_ACCESS_KEY=${CENTER_ACCESS_KEY}
       - CENTER_URL=${CENTER_URL}
-      - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
-      - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
       - SERVICE_BASE_URL=${SERVICE_BASE_URL}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
-
     volumes:
       - "/etc/localtime:/etc/localtime:ro"
       - "/usr/share/zoneinfo:/usr/share/zoneinfo:ro"
+    networks:
+      - tms-network
+
+  tms-mock-auth:
+    build:
+      context: ./mock_auth_server
+      dockerfile: Dockerfile
+    container_name: tms-mock-auth
+    restart: always
+    ports:
+      - "5003:5003"
+    environment:
+      - TMS_LINE_PROVIDER_URL=http://tms-line-provider:5002
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      - AUTH_SERVER_URL=${AUTH_SERVER_URL}
+      - LINE_CLIENT_ID=${LINE_CLIENT_ID}
+      - LINE_CLIENT_SECRET=${LINE_CLIENT_SECRET} # ← add this line
+    depends_on:
+      - tms-line-provider
+    networks:
+      - tms-network
+
+networks:
+  tms-network:
+    driver: bridge
