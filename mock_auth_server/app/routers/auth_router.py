@@ -12,7 +12,7 @@ from pydantic import BaseModel
 router = APIRouter()
 
 _pending_links: dict = {}
-_oauth_states: dict = {}
+# oauth_state is stored inside each _pending_links entry — no separate dict needed
 
 TOKEN_TTL_MINUTES  = 10
 LINE_CLIENT_ID     = os.getenv("LINE_CLIENT_ID", "2010354335")
@@ -39,7 +39,6 @@ def _make_qr_base64(url: str) -> str:
 
 class GenerateLinkRequest(BaseModel):
     company_id:   str
-    oa_token:     str
     tms_username: str
 
 
@@ -54,10 +53,10 @@ def generate_link(body: GenerateLinkRequest):
 
     _pending_links[token] = {
         "company_id":   body.company_id,
-        "oa_token":     body.oa_token,
         "tms_username": body.tms_username,
         "expires_at":   expires_at.isoformat(),
         "qr_base64":    qr_b64,
+        "oauth_state":  None,  # filled in when /line/login is visited
     }
 
     return {
@@ -87,9 +86,11 @@ def line_login(token: str):
     company_id   = link["company_id"]
     tms_username = link["tms_username"]
 
-    # Generate OAuth state here so QR and button share the same state
+    # Always generate a fresh oauth_state and overwrite the previous one.
+    # This means refresh / re-open is safe — the old state is just replaced,
+    # so LINE always redirects back with a state we recognise.
     oauth_state = str(uuid.uuid4()).replace("-", "")
-    _oauth_states[oauth_state] = token
+    link["oauth_state"] = oauth_state
 
     callback_url   = f"{AUTH_SERVER_URL}/auth/line/callback"
     line_oauth_url = (
@@ -215,14 +216,15 @@ async def line_callback(code: str = None, state: str = None, error: str = None):
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state from LINE")
 
-    token = _oauth_states.get(state)
+    # Find the pending link that owns this oauth_state
+    token = next(
+        (t for t, l in _pending_links.items() if l.get("oauth_state") == state),
+        None,
+    )
     if not token:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
 
-    link = _pending_links.get(token)
-    if not link:
-        raise HTTPException(status_code=400, detail="Login link not found or already used")
-
+    link = _pending_links[token]
     tms_username = link["tms_username"]
     company_id   = link["company_id"]
 
@@ -272,7 +274,6 @@ async def line_callback(code: str = None, state: str = None, error: str = None):
             timeout=10,
         )
 
-    del _oauth_states[state]
     del _pending_links[token]
 
     if resp.status_code != 200:
