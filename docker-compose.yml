@@ -44,7 +44,8 @@ services:
       - ADMIN_TOKEN=${ADMIN_TOKEN}
       - AUTH_SERVER_URL=${AUTH_SERVER_URL}
       - LINE_CLIENT_ID=${LINE_CLIENT_ID}
-      - LINE_CLIENT_SECRET=${LINE_CLIENT_SECRET} # ← add this line
+      - LINE_CLIENT_SECRET=${LINE_CLIENT_SECRET}
+      - LINE_CALLBACK_URL=${LINE_CALLBACK_URL}
     depends_on:
       - tms-line-provider
     networks:

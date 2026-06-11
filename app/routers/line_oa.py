@@ -15,6 +15,7 @@ from app.repositories.token_repository import (
     get_tokens_by_company,
 )
 from app.extensions import redis_client, set_cached_token_data, delete_cached_token
+from app.database import SessionLocal, RecipientLink
 
 router = APIRouter(prefix="/api/line-oa", tags=["LINE OA Registry"])
 
@@ -36,6 +37,11 @@ class TokenRequest(BaseModel):
 
 class CompanyRequest(BaseModel):
     company_id: str
+
+class NotifyRequest(BaseModel):
+    token:    str
+    tms_usernames: list[str]
+    payload:  dict
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -150,4 +156,58 @@ async def list_line_oas(body: CompanyRequest):
             for row in rows
         ],
         "count": len(rows),
+    }
+
+@router.post("/notify", dependencies=[Depends(verify_required)])
+async def notify_line_oa(body: NotifyRequest):
+    """Resolve TMS usernames → LINE user IDs, then multicast a Flex Message via LINE API."""
+    if not body.tms_usernames:
+        return {"success": True, "message": "no recipients"}
+
+    row = get_company_by_token(body.token)
+    if not row:
+        raise HTTPException(status_code=404, detail="Token not found.")
+
+    # Resolve tms_usernames → line_user_ids via RecipientLink
+    with SessionLocal() as db:
+        links = (
+            db.query(RecipientLink)
+            .filter(
+                RecipientLink.tms_username.in_(body.tms_usernames),
+                RecipientLink.opted_in == True,
+            )
+            .all()
+        )
+
+    line_ids = [link.line_user_id for link in links if link.line_user_id]
+
+    if not line_ids:
+        return {"success": True, "message": "no linked LINE accounts found for given usernames"}
+
+    try:
+        res = http_requests.post(
+            "https://api.line.me/v2/bot/message/multicast",
+            headers={
+                "Content-Type":  "application/json",
+                "Authorization": f"Bearer {row.channel_access_token}",
+            },
+            json={
+                "to":       line_ids,
+                "messages": [body.payload],
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LINE multicast unreachable: {e}")
+
+    if res.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"LINE multicast failed ({res.status_code}): {res.text[:200]}",
+        )
+
+    return {
+        "success":    True,
+        "recipients": len(line_ids),
+        "unlinked":   [u for u in body.tms_usernames if u not in {l.tms_username for l in links}],
     }
