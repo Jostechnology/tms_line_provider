@@ -110,6 +110,12 @@ async def webhook(token: str, request: Request):
     try:
         handler.handle(body.decode("utf-8"), signature)
     except InvalidSignatureError:
+        print(
+            f"[webhook] invalid signature company={company_id} token={token[:10]}… "
+            f"sig_header={'present' if signature else 'MISSING'} "
+            f"secret_len={len(token_data['channel_secret'] or '')} body_len={len(body)} "
+            f"body_preview={body[:120]!r}"
+        )
         raise HTTPException(status_code=400, detail="Invalid signature")
     except Exception as e:
         traceback.print_exc()

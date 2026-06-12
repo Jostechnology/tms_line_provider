@@ -1,4 +1,5 @@
 import traceback
+from datetime import datetime, timezone
 from typing import List, Optional
 import requests as http_requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,6 +16,7 @@ from app.repositories.token_repository import (
     get_tokens_by_company,
 )
 from app.repositories.line_tms_repository import get_line_ids_by_tms_ids
+from app.repositories.delivery_log_repository import log_push
 from app.extensions import redis_client, set_cached_token_data, delete_cached_token
 
 LINE_MULTICAST_URL = "https://api.line.me/v2/bot/message/multicast"
@@ -198,6 +200,11 @@ def notify(body: NotifyRequest):
     unlinked = [u for u in body.tms_usernames if u not in line_id_by_user]
     line_ids = list(set(line_id_by_user.values()))
 
+    print(
+        f"[notify] company={body.company_id} requested={len(body.tms_usernames)} "
+        f"linked={len(line_ids)} unlinked={unlinked}"
+    )
+
     if not line_ids:
         return {"success": True, "recipients": 0, "unlinked": unlinked,
                 "message": "no linked LINE recipients"}
@@ -221,5 +228,23 @@ def notify(body: NotifyRequest):
                 detail=f"LINE multicast failed: {resp.status_code} {resp.text[:200]}",
             )
         sent += len(batch)
+
+    # One delivery_logs row per linked recipient. trip_id/event_type are synthetic
+    # — this is a TMS-user push, not an event-driven customer card. Best-effort:
+    # a logging failure must not fail an already-delivered notify.
+    now = datetime.now(timezone.utc)
+    for tms_username, line_id in line_id_by_user.items():
+        try:
+            log_push(
+                company_id=str(body.company_id),
+                trip_id="-",
+                event_type="line-oa.notify",
+                customer_code=tms_username,
+                line_user_id=line_id,
+                status="sent",
+                occurred_at=now,
+            )
+        except Exception as e:
+            print(f"[notify] log_push failed user={tms_username}: {e}")
 
     return {"success": True, "recipients": sent, "unlinked": unlinked}
