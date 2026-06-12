@@ -6,6 +6,7 @@ requests==2.32.5
 line-bot-sdk
 SQLAlchemy==2.0.36
 psycopg2-binary==2.9.10
+mysql-connector-python==9.1.0
 redis==5.0.4
 qrcode[pil]==7.4.2
 gunicorn
