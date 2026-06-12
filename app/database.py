@@ -14,10 +14,10 @@ class LineOAToken(Base):
     """Each row is one LINE OA registration. token is the primary key."""
     __tablename__ = "line_oa_tokens"
 
-    token                = Column(String, primary_key=True, index=True)
-    company_id           = Column(String, nullable=False, index=True)
-    channel_secret       = Column(String, nullable=False)
-    channel_access_token = Column(String, nullable=False)
+    token                = Column(String(64), primary_key=True, index=True)
+    company_id           = Column(String(64), nullable=False, index=True)
+    channel_secret       = Column(String(64), nullable=False)
+    channel_access_token = Column(String(512), nullable=False)
     created_at           = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at           = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
                                   onupdate=lambda: datetime.now(timezone.utc))
@@ -32,11 +32,11 @@ class RecipientLink(Base):
     __tablename__ = "recipient_links"
 
     id            = Column(Integer, primary_key=True, autoincrement=True)
-    company_id    = Column(String, nullable=False, index=True)
-    customer_code = Column(String, nullable=True, index=True)
-    line_user_id  = Column(String, nullable=False, index=True)
-    oa_token      = Column(String, nullable=True)
-    tms_username  = Column(String, nullable=True)
+    company_id    = Column(String(64), nullable=False, index=True)
+    customer_code = Column(String(128), nullable=True, index=True)
+    line_user_id  = Column(String(64), nullable=False, index=True)
+    oa_token      = Column(String(64), nullable=True)
+    tms_username  = Column(String(128), nullable=True)
     opted_in      = Column(Boolean, nullable=False, default=True)
     created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
@@ -52,8 +52,8 @@ class LineTmsLink(Base):
     __tablename__ = "line_tms_links"
 
     id         = Column(Integer, primary_key=True, autoincrement=True)
-    tms_id     = Column(String, nullable=False, unique=True, index=True)
-    line_id    = Column(String, nullable=False, index=True)
+    tms_id     = Column(String(128), nullable=False, unique=True, index=True)
+    line_id    = Column(String(64), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc))
@@ -67,12 +67,12 @@ class DeliveryLog(Base):
     __tablename__ = "delivery_logs"
 
     id            = Column(Integer, primary_key=True, autoincrement=True)
-    company_id    = Column(String, nullable=False, index=True)
-    trip_id       = Column(String, nullable=False, index=True)
-    event_type    = Column(String, nullable=False)
-    customer_code = Column(String, nullable=False)
-    line_user_id  = Column(String, nullable=True)
-    status        = Column(String, nullable=False)
+    company_id    = Column(String(64), nullable=False, index=True)
+    trip_id       = Column(String(128), nullable=False, index=True)
+    event_type    = Column(String(64), nullable=False)
+    customer_code = Column(String(128), nullable=False)
+    line_user_id  = Column(String(64), nullable=True)
+    status        = Column(String(32), nullable=False)
     error_detail  = Column(Text, nullable=True)
     occurred_at   = Column(DateTime(timezone=True), nullable=False)
     pushed_at     = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

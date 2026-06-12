@@ -10,7 +10,7 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 # Base URL of this service — used to build webhook URLs shown to admins
 SERVICE_BASE_URL = os.getenv("SERVICE_BASE_URL", "http://localhost:5002")
 
-# PostgreSQL connection string
+# Database connection string (MySQL in prod: mysql+mysqlconnector://...)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Redis URL
