@@ -1,0 +1,97 @@
+name: tms-line-provider
+
+on:
+  push:
+    branches:
+      - main
+permissions:
+  contents: write  # Give the GITHUB_TOKEN permission to push tags
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout the code from GitHub
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Set up Docker Buildx for multi-platform builds
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # Log in to GitLab Container Registry
+      - name: Log in to GitLab Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: registry.gitlab.com
+          username: ${{ secrets.GITLAB_USERNAME }}
+          password: ${{ secrets.GITLAB_ACCESS_TOKEN }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-files
+          path: |
+            docker-compose.yml
+
+      # Build and push the Docker image
+      - name: Build and push Docker image
+        run: |
+          docker build -t registry.gitlab.com/jostechnology/tms-line-provider:${{ github.sha }} .
+          docker push registry.gitlab.com/jostechnology/tms-line-provider:${{ github.sha }}
+      # Create a new tag and push it to GitHub
+      - name: Create and push Git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="v$(date +'%Y%m%d%H%M%S')-${{ github.sha }}"
+          echo "Creating Git tag $TAG"
+          git tag $TAG
+          git push origin $TAG
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-files
+
+      - name: Install sshpass
+        run: sudo apt-get install -y sshpass
+
+      - name: Deploy to Dev Server
+        run: |
+          PASS=$(printf '%s' '${{ secrets.DEV_DEPLOY_PASSWORD }}')
+
+          echo "Starting deploy to Lightsail host..."
+          echo "Host: ${{ secrets.DEV_DEPLOY_HOST }}"
+          echo "User: ${{ secrets.DEV_DEPLOY_USER }}"
+
+          sshpass -p "$PASS" scp -o StrictHostKeyChecking=no docker-compose.yml \
+            ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }}:/root/tms-line-provider/docker-compose.yml
+
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.DEV_DEPLOY_USER }}@${{ secrets.DEV_DEPLOY_HOST }} << 'EOF'
+          set -e
+          cd /root/tms-line-provider
+
+          echo "TAG=${{ github.sha }}" > .env
+          echo 'ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}' >> .env
+          echo 'SERVICE_BASE_URL=${{ vars.SERVICE_BASE_URL }}' >> .env
+          echo 'DATABASE_URL=${{ vars.DATABASE_URL }}' >> .env
+
+          echo "Logging in to GitLab Container Registry"
+          docker login -u ${{ secrets.GITLAB_USERNAME }} -p ${{ secrets.GITLAB_ACCESS_TOKEN }} registry.gitlab.com
+
+          echo "Rebuilding containers..."
+          docker-compose down
+          docker-compose up -d
+
+          echo "✅ Deploy completed successfully."
+          EOF

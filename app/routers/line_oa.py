@@ -60,11 +60,14 @@ async def sync_line_oa(body: SyncRequest):
     if not bot_info:
         raise HTTPException(status_code=400, detail="Invalid LINE credentials. Please check your channel_access_token.")
 
-    row, created = register_company_token(
-        company_id=str(body.company_id),
-        channel_secret=body.channel_secret,
-        channel_access_token=body.channel_access_token,
-    )
+    try:
+        row, created = register_company_token(
+            company_id=str(body.company_id),
+            channel_secret=body.channel_secret,
+            channel_access_token=body.channel_access_token,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
     set_cached_token_data(row.token, {
         "company_id":           row.company_id,

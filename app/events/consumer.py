@@ -4,8 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.auth import verify_required
 from app.schemas.events_schema import parse_event, EventType
 from app.services.notification_service import push_event
-from app.repositories.token_repository import get_company_by_token
-from app.extensions import get_cached_token_data, set_cached_token_data
+from app.repositories.token_repository import get_tokens_by_company
 
 router = APIRouter(prefix="/api", tags=["Event Consumer"])
 
@@ -89,35 +88,30 @@ async def receive_event_admin(body: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/events/{oa_token}")
-async def receive_event(oa_token: str, body: dict):
+@router.post("/events/{company_id}", dependencies=[Depends(verify_required)])
+async def receive_event(company_id: str, body: dict):
     """
-    Per-tenant endpoint — authenticated via OA token in the URL.
-    The token identifies both the company and which OA to push from.
-    tenant_id in the payload is ignored — derived from the token.
-    """
-    # Resolve company from OA token
-    token_data = get_cached_token_data(oa_token)
-    if not token_data:
-        token_row = get_company_by_token(oa_token)
-        if not token_row:
-            raise HTTPException(status_code=401, detail="Invalid OA token")
-        token_data = {
-            "company_id":           token_row.company_id,
-            "channel_secret":       token_row.channel_secret,
-            "channel_access_token": token_row.channel_access_token,
-        }
-        set_cached_token_data(oa_token, token_data)
+    Per-tenant notify endpoint. TMS sends the company_id in the URL; we resolve
+    it to the company's registered OA(s) ourselves.
 
-    # Inject tenant_id from token — payload's tenant_id is ignored
-    body["tenant_id"] = token_data["company_id"]
+    Authenticated via ADMIN_TOKEN — company_id is an identifier, not a secret,
+    so the bearer token (not the path) is what proves the caller is TMS.
+
+    tenant_id in the payload is ignored — derived from the path. The specific OA
+    used to push is chosen per-recipient downstream in notification_service.
+    """
+    # Resolve company_id → registered OA(s). Reject unknown companies.
+    if not get_tokens_by_company(company_id):
+        raise HTTPException(status_code=404, detail="Unknown company_id — no registered OA")
+
+    body["tenant_id"] = company_id
 
     try:
         event = parse_event(body)
         dispatch(event)
         return {
             "success":    True,
-            "company_id": token_data["company_id"],
+            "company_id": company_id,
             "event_type": event.event_type,
             "trip_id":    event.trip_id,
         }

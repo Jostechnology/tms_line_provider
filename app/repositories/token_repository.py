@@ -21,10 +21,12 @@ def get_tokens_by_company(company_id: str) -> List[LineOAToken]:
 def register_company_token(company_id: str, channel_secret: str, channel_access_token: str) -> tuple:
     """
     If this exact OA channel is already registered under the same company → return existing row, created=False
-    If new (different company or different credentials) → create new row, created=True
+    If new and the company has no OA yet → create new row, created=True
+    If the company already has a different OA → raise ValueError (rejected)
 
-    One company can have multiple OAs.
-    The same OA credentials cannot be registered twice under the same company.
+    Policy: one OA per company. The DB schema stays one-to-many (a company *can*
+    hold many rows), but this service layer enforces a single OA per company for
+    now. Re-syncing the same credentials remains idempotent.
     """
     with SessionLocal() as db:
         # Deduplicate per company — same credentials + same company = already registered
@@ -37,7 +39,14 @@ def register_company_token(company_id: str, channel_secret: str, channel_access_
         if existing:
             return existing, False
 
-        # New OA for this company — generate fresh token
+        # Reject a second (different) OA for a company that already has one.
+        if db.query(LineOAToken).filter(LineOAToken.company_id == company_id).first():
+            raise ValueError(
+                f"company_id {company_id} already has an OA registered; "
+                "only one OA per company is allowed"
+            )
+
+        # First OA for this company — generate fresh token
         token = _generate_token()
         new_row = LineOAToken(
             token=token,

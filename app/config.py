@@ -4,9 +4,6 @@ import os
 basedir = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(basedir, '../.env'))
 
-CENTER_ACCESS_KEY = os.getenv("CENTER_ACCESS_KEY")
-CENTER_URL        = os.getenv("CENTER_URL")
-
 # Admin token — protects /api/line-oa/sync and /api/line-oa/rotate
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
