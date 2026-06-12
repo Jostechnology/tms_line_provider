@@ -23,10 +23,6 @@ services:
       - SERVICE_BASE_URL=${SERVICE_BASE_URL}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
-      # LINE Login channel for the account-linking flow (folded in from the old
-      # mock_auth_server). Callback is {SERVICE_BASE_URL}/auth/line/callback.
-      - LINE_CLIENT_ID=${LINE_CLIENT_ID}
-      - LINE_CLIENT_SECRET=${LINE_CLIENT_SECRET}
     volumes:
       - "/etc/localtime:/etc/localtime:ro"
       - "/usr/share/zoneinfo:/usr/share/zoneinfo:ro"

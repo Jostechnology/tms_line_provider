@@ -15,10 +15,3 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Redis URL
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
-# LINE Login channel — used by the account-linking flow (app/routers/line_connect.py)
-# to run the real OAuth dance. Distinct from a tenant's Messaging OA credentials.
-# The OAuth callback is served at {SERVICE_BASE_URL}/auth/line/callback, which must
-# be registered as the callback URL in the LINE Login channel.
-LINE_CLIENT_ID = os.getenv("LINE_CLIENT_ID")
-LINE_CLIENT_SECRET = os.getenv("LINE_CLIENT_SECRET")

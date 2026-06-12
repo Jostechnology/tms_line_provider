@@ -10,6 +10,8 @@ from linebot.v3.exceptions import InvalidSignatureError
 from app.extensions import get_cached_token_data, set_cached_token_data
 from app.repositories.token_repository import get_company_by_token
 from app.repositories.recipient_repository import opt_out
+from app.repositories.line_tms_repository import upsert_line_tms_link
+from app.services.account_link import consume_link_code
 
 router = APIRouter(tags=["LINE Webhook"])
 
@@ -78,23 +80,32 @@ async def webhook(token: str, request: Request):
     @handler.add(MessageEvent, message=TextMessageContent)
     def handle_message(event):
         user_id = event.source.user_id
-        # Debug: this is the OA/provider-scoped userId. Compare against the id
-        # stored by account-linking — a mismatch means Login and Messaging API
-        # channels are in different providers, so multicast silently drops.
-        print(f"[webhook] inbound message company={company_id} user_id={user_id}")
         try:
-            # Provider role: this service notifies/tracks, it does not converse with
-            # customers. Inbound free-text gets a passive acknowledgement.
-            set_user_state(company_id, user_id, {"status": "idle"})
+            text = event.message.text.strip()
+            code = text.upper()
+
+            # Account-linking: the user sends the one-time code TMS minted. The
+            # userId here is scoped to THIS OA's provider — the only id usable for
+            # pushing back via this OA. Bind it to the tms_username.
+            if code.startswith("LINK-"):
+                tms_username = consume_link_code(company_id, code)
+                if tms_username:
+                    # `token` (the webhook path param) IS this OA's channel token —
+                    # the channel the userId is scoped to. Bind it so pushes route back
+                    # through the same OA.
+                    upsert_line_tms_link(company_id, tms_username, user_id, oa_token=token)
+                    print(f"[link] bound company={company_id} tms={tms_username} user={user_id}")
+                    _reply(event.reply_token, f"เชื่อมต่อบัญชี {tms_username} เรียบร้อยแล้ว ✅")
+                else:
+                    _reply(event.reply_token, "รหัสเชื่อมต่อไม่ถูกต้องหรือหมดอายุ กรุณาขอรหัสใหม่จากระบบ TMS")
+                return
+
+            # Provider role: not a conversational bot — passive ack for anything else.
             _reply(event.reply_token, "ระบบไม่เข้าใจคำสั่ง กรุณาเลือกรายการที่จะทำหรือสอบถามทิ้งไว้ได้เลยครับ 🙏🏻")
 
-        except ValueError as e:
-            set_user_state(company_id, user_id, {"status": "idle"})
-            _reply(event.reply_token, str(e))
-        except Exception as e:
-            set_user_state(company_id, user_id, {"status": "idle"})
+        except Exception:
             traceback.print_exc()
-            _reply(event.reply_token, "เกิดข้อผิดพลาด กรุณาตรวจสอบข้อความอีกครั้งหรือลองใหม่ในภายหลัง")
+            _reply(event.reply_token, "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง")
 
     @handler.add(PostbackEvent)
     def handle_postback(event):

@@ -1,6 +1,11 @@
+import base64
 import traceback
 from datetime import datetime, timezone
+from io import BytesIO
 from typing import List, Optional
+from urllib.parse import quote
+
+import qrcode
 import requests as http_requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -17,6 +22,7 @@ from app.repositories.token_repository import (
 )
 from app.repositories.line_tms_repository import get_line_ids_by_tms_ids
 from app.repositories.delivery_log_repository import log_push
+from app.services.account_link import mint_link_code, CODE_TTL_SECONDS
 from app.extensions import redis_client, set_cached_token_data, delete_cached_token
 
 LINE_MULTICAST_URL = "https://api.line.me/v2/bot/message/multicast"
@@ -47,8 +53,21 @@ class NotifyRequest(BaseModel):
     tms_usernames: List[str]      # resolved to LINE user ids via line_tms_links
     payload:       dict           # a LINE message object (Flex), pushed as-is
 
+class LinkStartRequest(BaseModel):
+    company_id:   str
+    tms_username: str
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _qr_base64(data: str) -> str:
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=3)
+    qr.add_data(data)
+    qr.make(fit=True)
+    buf = BytesIO()
+    qr.make_image(fill_color="#06C755", back_color="white").save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
 
 def get_line_bot_info(channel_access_token: str) -> Optional[dict]:
     try:
@@ -195,8 +214,8 @@ def notify(body: NotifyRequest):
         raise HTTPException(status_code=404, detail="Unknown company_id — no registered OA")
     channel_access_token = oas[0].channel_access_token
 
-    # usernames → LINE user ids.
-    line_id_by_user = get_line_ids_by_tms_ids(body.tms_usernames)
+    # usernames → LINE user ids, scoped to this tenant (line_ids are per-channel).
+    line_id_by_user = get_line_ids_by_tms_ids(str(body.company_id), body.tms_usernames)
     unlinked = [u for u in body.tms_usernames if u not in line_id_by_user]
     line_ids = list(set(line_id_by_user.values()))
 
@@ -248,3 +267,40 @@ def notify(body: NotifyRequest):
             print(f"[notify] log_push failed user={tms_username}: {e}")
 
     return {"success": True, "recipients": sent, "unlinked": unlinked}
+
+
+@router.post("/link/start", dependencies=[Depends(verify_required)])
+def link_start(body: LinkStartRequest):
+    """Begin account-linking for a TMS user *through the tenant's own OA*.
+
+    A LINE userId is per-provider, so the only id usable for pushing via the
+    customer's OA is the one that OA's webhook reports. We mint a one-time code,
+    and the user sends it to the OA (the deep link pre-fills it). The webhook
+    then binds tms_username ↔ userId with the correctly-scoped id.
+
+    Returns the code, a LINE deep link into the OA chat (pre-filled), and a QR of
+    that link. TMS shows whichever fits its UI.
+    """
+    oas = get_tokens_by_company(str(body.company_id))
+    if not oas:
+        raise HTTPException(status_code=404, detail="Unknown company_id — no registered OA")
+
+    info = get_line_bot_info(oas[0].channel_access_token)
+    if not info or not info.get("basicId"):
+        raise HTTPException(status_code=502, detail="OA credentials invalid; re-sync the OA")
+    basic_id = info["basicId"]   # e.g. "@123abcd"
+
+    code = mint_link_code(str(body.company_id), body.tms_username)
+    # Deep link opens the OA 1:1 chat with the code pre-filled as the message.
+    deep_link = f"https://line.me/R/oaMessage/{basic_id}/?{quote(code)}"
+
+    return {
+        "success":        True,
+        "company_id":     body.company_id,
+        "tms_username":   body.tms_username,
+        "code":           code,
+        "deep_link":      deep_link,
+        "qr_code_base64": _qr_base64(deep_link),
+        "oa_basic_id":    basic_id,
+        "expires_in":     f"{CODE_TTL_SECONDS // 60} minutes",
+    }
