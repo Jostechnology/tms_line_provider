@@ -19,6 +19,7 @@ import json
 import uuid
 from io import BytesIO
 from typing import Optional
+from urllib.parse import urlencode
 
 import qrcode
 import requests
@@ -113,14 +114,17 @@ def line_login(token: str):
     redis_client.setex(f"{_STATE_PREFIX}{oauth_state}", TOKEN_TTL_SECONDS, token)
 
     callback_url = f"{SERVICE_BASE_URL}/auth/line/callback"
-    line_oauth_url = (
-        f"https://access.line.me/oauth2/v2.1/authorize"
-        f"?response_type=code"
-        f"&client_id={LINE_CLIENT_ID}"
-        f"&redirect_uri={callback_url}"
-        f"&state={oauth_state}"
-        f"&scope=profile%20openid"
-    )
+    print(f"Callback URL : {callback_url}")
+    # redirect_uri must be percent-encoded and match the LINE Login channel's
+    # registered Callback URL byte-for-byte.
+    query = urlencode({
+        "response_type": "code",
+        "client_id":     LINE_CLIENT_ID,
+        "redirect_uri":  callback_url,
+        "state":         oauth_state,
+        "scope":         "profile openid",
+    })
+    line_oauth_url = f"https://access.line.me/oauth2/v2.1/authorize?{query}"
 
     # QR encodes LINE OAuth URL directly — scanning opens LINE login immediately.
     qr_b64 = _make_qr_base64(line_oauth_url)
