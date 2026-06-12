@@ -42,7 +42,7 @@ app.include_router(line_tms_router.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "success" : True}
 
 
 # ─── Delivery log endpoints ───────────────────────────────────────────────────
