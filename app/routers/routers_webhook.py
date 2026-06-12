@@ -78,6 +78,10 @@ async def webhook(token: str, request: Request):
     @handler.add(MessageEvent, message=TextMessageContent)
     def handle_message(event):
         user_id = event.source.user_id
+        # Debug: this is the OA/provider-scoped userId. Compare against the id
+        # stored by account-linking — a mismatch means Login and Messaging API
+        # channels are in different providers, so multicast silently drops.
+        print(f"[webhook] inbound message company={company_id} user_id={user_id}")
         try:
             # Provider role: this service notifies/tracks, it does not converse with
             # customers. Inbound free-text gets a passive acknowledgement.
