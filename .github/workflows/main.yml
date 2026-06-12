@@ -85,6 +85,8 @@ jobs:
           echo 'ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}' >> .env
           echo 'SERVICE_BASE_URL=${{ vars.SERVICE_BASE_URL }}' >> .env
           echo 'DATABASE_URL=${{ vars.DATABASE_URL }}' >> .env
+          echo 'LINE_CLIENT_ID=${{ vars.LINE_CLIENT_ID }}' >> .env
+          echo 'LINE_CLIENT_SECRET=${{ secrets.LINE_CLIENT_SECRET }}' >> .env
 
           echo "Logging in to GitLab Container Registry"
           docker login -u ${{ secrets.GITLAB_USERNAME }} -p ${{ secrets.GITLAB_ACCESS_TOKEN }} registry.gitlab.com

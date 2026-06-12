@@ -23,30 +23,15 @@ services:
       - SERVICE_BASE_URL=${SERVICE_BASE_URL}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
+      # LINE Login channel for the account-linking flow (folded in from the old
+      # mock_auth_server). Callback is {SERVICE_BASE_URL}/auth/line/callback.
+      - LINE_CLIENT_ID=${LINE_CLIENT_ID}
+      - LINE_CLIENT_SECRET=${LINE_CLIENT_SECRET}
     volumes:
       - "/etc/localtime:/etc/localtime:ro"
       - "/usr/share/zoneinfo:/usr/share/zoneinfo:ro"
     networks:
       - line-provider
-
-  # tms-mock-auth:
-  #   build:
-  #     context: ./mock_auth_server
-  #     dockerfile: Dockerfile
-  #   container_name: tms-mock-auth
-  #   restart: always
-  #   ports:
-  #     - "5003:5003"
-  #   environment:
-  #     - TMS_LINE_PROVIDER_URL=http://tms-line-provider:5002
-  #     - ADMIN_TOKEN=${ADMIN_TOKEN}
-  #     - AUTH_SERVER_URL=${AUTH_SERVER_URL}
-  #     - LINE_CLIENT_ID=${LINE_CLIENT_ID}
-  #     - LINE_CLIENT_SECRET=${LINE_CLIENT_SECRET} # ← add this line
-  #   depends_on:
-  #     - tms-line-provider
-  #   networks:
-  #     - line-provider
 
 networks:
   line-provider:

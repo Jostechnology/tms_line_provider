@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 from app.auth import verify_required
 
-from app.routers import line_oa, routers_webhook, tracking, recipients_router, line_tms_router
+from app.routers import line_oa, routers_webhook, tracking, recipients_router, line_tms_router, line_connect
 from app.events.consumer import router as events_router
 from app.repositories.delivery_log_repository import get_logs_by_tenant, get_logs_by_trip
 
@@ -37,6 +37,7 @@ app.include_router(events_router)
 app.include_router(tracking.router)
 app.include_router(recipients_router.router)
 app.include_router(line_tms_router.router)
+app.include_router(line_connect.router)
 
 
 

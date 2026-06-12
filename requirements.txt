@@ -7,6 +7,7 @@ line-bot-sdk
 SQLAlchemy==2.0.36
 psycopg2-binary==2.9.10
 redis==5.0.4
+qrcode[pil]==7.4.2
 gunicorn
 certifi==2025.11.12
 charset-normalizer==3.4.4
