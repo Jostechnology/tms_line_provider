@@ -283,7 +283,7 @@ def link_start(body: LinkStartRequest):
     """
     oas = get_tokens_by_company(str(body.company_id))
     if not oas:
-        raise HTTPException(status_code=404, detail="Unknown company_id — no registered OA")
+        raise HTTPException(status_code=404, detail=f"Unknown company_id — no registered OA for Linking : Your group={(str(body.company_id))}")
 
     info = get_line_bot_info(oas[0].channel_access_token)
     if not info or not info.get("basicId"):
