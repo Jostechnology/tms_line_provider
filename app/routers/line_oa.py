@@ -1,5 +1,5 @@
 import traceback
-from typing import Optional
+from typing import List, Optional
 import requests as http_requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -14,7 +14,10 @@ from app.repositories.token_repository import (
     revoke_token,
     get_tokens_by_company,
 )
+from app.repositories.line_tms_repository import get_line_ids_by_tms_ids
 from app.extensions import redis_client, set_cached_token_data, delete_cached_token
+
+LINE_MULTICAST_URL = "https://api.line.me/v2/bot/message/multicast"
 
 router = APIRouter(prefix="/api/line-oa", tags=["LINE OA Registry"])
 
@@ -36,6 +39,11 @@ class TokenRequest(BaseModel):
 
 class CompanyRequest(BaseModel):
     company_id: str
+
+class NotifyRequest(BaseModel):
+    company_id:    str            # TMS group_id; resolved to the tenant's OA
+    tms_usernames: List[str]      # resolved to LINE user ids via line_tms_links
+    payload:       dict           # a LINE message object (Flex), pushed as-is
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -154,3 +162,54 @@ async def list_line_oas(body: CompanyRequest):
         ],
         "count": len(rows),
     }
+
+
+@router.post("/notify", dependencies=[Depends(verify_required)])
+def notify(body: NotifyRequest):
+    """Internal-user push: deliver a pre-rendered LINE message to a tenant's TMS users.
+
+    TMS owns recipient selection + rendering and sends us company_id (group_id),
+    the target tms_usernames, and a ready LINE message object. We resolve
+    company_id → the tenant's OA channel token, usernames → LINE user ids (via
+    line_tms_links), and multicast. Unlinked usernames are skipped, not an error
+    — they simply haven't completed the LINE account-linking flow yet.
+
+    (Customer-facing delivery cards go through POST /api/events/{company_id},
+    which resolves by customer_code and renders provider-side — a separate path.)
+    """
+    # group_id → the tenant's OA channel token (one OA per company by policy).
+    oas = get_tokens_by_company(str(body.company_id))
+    if not oas:
+        raise HTTPException(status_code=404, detail="Unknown company_id — no registered OA")
+    channel_access_token = oas[0].channel_access_token
+
+    # usernames → LINE user ids.
+    line_id_by_user = get_line_ids_by_tms_ids(body.tms_usernames)
+    unlinked = [u for u in body.tms_usernames if u not in line_id_by_user]
+    line_ids = list(set(line_id_by_user.values()))
+
+    if not line_ids:
+        return {"success": True, "recipients": 0, "unlinked": unlinked,
+                "message": "no linked LINE recipients"}
+
+    # LINE multicast caps `to` at 500 ids per call.
+    sent = 0
+    for i in range(0, len(line_ids), 500):
+        batch = line_ids[i:i + 500]
+        resp = http_requests.post(
+            LINE_MULTICAST_URL,
+            headers={
+                "Authorization": f"Bearer {channel_access_token}",
+                "Content-Type":  "application/json",
+            },
+            json={"to": batch, "messages": [body.payload]},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"LINE multicast failed: {resp.status_code} {resp.text[:200]}",
+            )
+        sent += len(batch)
+
+    return {"success": True, "recipients": sent, "unlinked": unlinked}
