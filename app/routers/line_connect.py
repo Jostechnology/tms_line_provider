@@ -1,23 +1,42 @@
-import uuid
-import os
-import io
+"""LINE account-linking flow (the real OAuth dance + its UI), folded into the
+main provider so there is no separate "mock auth" sidecar.
+
+Despite the old name, this was never a mock: it runs the real LINE OAuth
+(authorize → callback → token exchange → profile), then records the resulting
+`tms_id ↔ line_id` mapping in `line_tms_links` — the table push delivery reads
+to resolve a TMS username to a LINE user. Keeping it as its own service bought
+nothing: this app already owns the table, the LINE creds, and the admin token.
+
+Paths are kept as `/auth/line/*` so the only LINE-console change is the callback
+*domain* (now SERVICE_BASE_URL), not the path.
+
+One-time login tokens and OAuth states live in Redis (not process memory) with a
+TTL: correct under multiple gunicorn workers, and the TTL replaces the manual
+expiry bookkeeping the old in-memory version did by hand.
+"""
 import base64
-import httpx
+import json
+import uuid
+from io import BytesIO
+from typing import Optional
+
 import qrcode
-from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException
+import requests
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-router = APIRouter()
+from app.auth import verify_required
+from app.config import LINE_CLIENT_ID, LINE_CLIENT_SECRET, SERVICE_BASE_URL
+from app.database import LineTmsLink, SessionLocal
+from app.extensions import redis_client
 
-_pending_links: dict = {}
-_oauth_states: dict = {}
+router = APIRouter(prefix="/auth/line", tags=["LINE Account Linking"])
 
-TOKEN_TTL_MINUTES  = 10
-LINE_CLIENT_ID     = os.getenv("LINE_CLIENT_ID", "2010354335")
-LINE_CLIENT_SECRET = os.getenv("LINE_CLIENT_SECRET", "272a16070d62aa5b11529b75486cf94c")
-AUTH_SERVER_URL    = os.getenv("AUTH_SERVER_URL", "http://localhost:5003")
+TOKEN_TTL_SECONDS = 10 * 60
+
+_PENDING_PREFIX = "connect:pending:"   # one-time login token → link context
+_STATE_PREFIX = "connect:state:"       # oauth state → login token
 
 
 def _make_qr_base64(url: str) -> str:
@@ -30,68 +49,70 @@ def _make_qr_base64(url: str) -> str:
     qr.add_data(url)
     qr.make(fit=True)
     img = qr.make_image(fill_color="#06C755", back_color="white")
-    buf = io.BytesIO()
+    buf = BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode()
 
 
-# ─── Step 0: TMS generates a one-time login link ─────────────────────────────
+# ─── Step 0: TMS generates a one-time login link (admin-authenticated) ────────
 
 class GenerateLinkRequest(BaseModel):
     company_id:   str
-    oa_token:     str
     tms_username: str
+    # Carried for forward-compat but unused: LineTmsLink is keyed by tms_id only,
+    # not per-OA, so the link flow never reads it. Optional so callers that don't
+    # track an OA token (the TMS proxy) can omit it.
+    oa_token:     Optional[str] = None
 
 
-@router.post("/line/generate-link")
+@router.post("/generate-link", dependencies=[Depends(verify_required)])
 def generate_link(body: GenerateLinkRequest):
-    token      = str(uuid.uuid4()).replace("-", "")
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=TOKEN_TTL_MINUTES)
+    """Mint a one-time login URL + QR for a TMS user to link their LINE account.
 
-    base_url  = os.getenv("AUTH_SERVER_URL", "http://localhost:5003")
-    login_url = f"{base_url}/auth/line/login?token={token}&ngrok-skip-browser-warning=true"
-    qr_b64    = _make_qr_base64(login_url)
+    TMS calls this, then renders the QR (data:image/png;base64,...) for the user.
+    """
+    token = uuid.uuid4().hex
+    login_url = f"{SERVICE_BASE_URL}/auth/line/login?token={token}&ngrok-skip-browser-warning=true"
+    qr_b64 = _make_qr_base64(login_url)
 
-    _pending_links[token] = {
-        "company_id":   body.company_id,
-        "oa_token":     body.oa_token,
-        "tms_username": body.tms_username,
-        "expires_at":   expires_at.isoformat(),
-        "qr_base64":    qr_b64,
-    }
+    redis_client.setex(
+        f"{_PENDING_PREFIX}{token}",
+        TOKEN_TTL_SECONDS,
+        json.dumps({
+            "company_id":   body.company_id,
+            "oa_token":     body.oa_token,
+            "tms_username": body.tms_username,
+        }),
+    )
 
     return {
         "success":        True,
         "login_url":      login_url,
         "qr_code_base64": qr_b64,
         "tms_id":         body.tms_username,
-        "expires_at":     expires_at.isoformat(),
-        "expires_in":     f"{TOKEN_TTL_MINUTES} minutes",
+        "expires_in":     f"{TOKEN_TTL_SECONDS // 60} minutes",
         "_hint":          'Render QR with: <img src="data:image/png;base64,{qr_code_base64}" />',
     }
 
 
-# ─── Step 1: Show login page with QR pointing directly to LINE OAuth ─────────
+# ─── Step 1: Branded landing page (QR + button into real LINE OAuth) ──────────
 
-@router.get("/line/login")
+@router.get("/login")
 def line_login(token: str):
-    link = _pending_links.get(token)
-    if not link:
-        raise HTTPException(status_code=404, detail="Login link not found or already used")
+    raw = redis_client.get(f"{_PENDING_PREFIX}{token}")
+    if not raw:
+        # Missing or TTL-expired — same user-facing outcome.
+        raise HTTPException(status_code=404, detail="Login link not found or expired")
 
-    expires_at = datetime.fromisoformat(link["expires_at"])
-    if datetime.now(timezone.utc) > expires_at:
-        del _pending_links[token]
-        raise HTTPException(status_code=410, detail="Login link has expired")
-
-    company_id   = link["company_id"]
+    link = json.loads(raw)
+    company_id = link["company_id"]
     tms_username = link["tms_username"]
 
-    # Generate OAuth state here so QR and button share the same state
-    oauth_state = str(uuid.uuid4()).replace("-", "")
-    _oauth_states[oauth_state] = token
+    # Bind an OAuth state to this login token so the callback can recover context.
+    oauth_state = uuid.uuid4().hex
+    redis_client.setex(f"{_STATE_PREFIX}{oauth_state}", TOKEN_TTL_SECONDS, token)
 
-    callback_url   = f"{AUTH_SERVER_URL}/auth/line/callback"
+    callback_url = f"{SERVICE_BASE_URL}/auth/line/callback"
     line_oauth_url = (
         f"https://access.line.me/oauth2/v2.1/authorize"
         f"?response_type=code"
@@ -101,7 +122,7 @@ def line_login(token: str):
         f"&scope=profile%20openid"
     )
 
-    # QR encodes LINE OAuth URL directly — scanning opens LINE login immediately
+    # QR encodes LINE OAuth URL directly — scanning opens LINE login immediately.
     qr_b64 = _make_qr_base64(line_oauth_url)
 
     html = f"""
@@ -206,77 +227,71 @@ def line_login(token: str):
     return HTMLResponse(content=html)
 
 
-# ─── Step 2: LINE redirects back here with code + state ──────────────────────
+# ─── Step 2: LINE redirects back with code + state; we link and confirm ───────
 
-@router.get("/line/callback")
-async def line_callback(code: str = None, state: str = None, error: str = None):
+@router.get("/callback")
+def line_callback(code: str = None, state: str = None, error: str = None):
     if error:
         raise HTTPException(status_code=400, detail=f"LINE OAuth error: {error}")
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state from LINE")
 
-    token = _oauth_states.get(state)
+    token = redis_client.get(f"{_STATE_PREFIX}{state}")
     if not token:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
 
-    link = _pending_links.get(token)
-    if not link:
+    raw = redis_client.get(f"{_PENDING_PREFIX}{token}")
+    if not raw:
         raise HTTPException(status_code=400, detail="Login link not found or already used")
 
+    link = json.loads(raw)
     tms_username = link["tms_username"]
-    company_id   = link["company_id"]
 
-    callback_url = f"{AUTH_SERVER_URL}/auth/line/callback"
-    async with httpx.AsyncClient() as client:
-        token_resp = await client.post(
-            "https://api.line.me/oauth2/v2.1/token",
-            data={
-                "grant_type":    "authorization_code",
-                "code":          code,
-                "redirect_uri":  callback_url,
-                "client_id":     LINE_CLIENT_ID,
-                "client_secret": LINE_CLIENT_SECRET,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=10,
-        )
-
+    callback_url = f"{SERVICE_BASE_URL}/auth/line/callback"
+    token_resp = requests.post(
+        "https://api.line.me/oauth2/v2.1/token",
+        data={
+            "grant_type":    "authorization_code",
+            "code":          code,
+            "redirect_uri":  callback_url,
+            "client_id":     LINE_CLIENT_ID,
+            "client_secret": LINE_CLIENT_SECRET,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=10,
+    )
     if token_resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"LINE token exchange failed: {token_resp.text}")
 
     access_token = token_resp.json().get("access_token")
 
-    async with httpx.AsyncClient() as client:
-        profile_resp = await client.get(
-            "https://api.line.me/v2/profile",
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=10,
-        )
-
+    profile_resp = requests.get(
+        "https://api.line.me/v2/profile",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=10,
+    )
     if profile_resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"LINE profile fetch failed: {profile_resp.text}")
 
-    profile      = profile_resp.json()
+    profile = profile_resp.json()
     line_user_id = profile.get("userId")
     display_name = profile.get("displayName", "")
-    picture_url  = profile.get("pictureUrl", "")
+    picture_url = profile.get("pictureUrl", "")
 
-    tms_base_url = os.getenv("TMS_LINE_PROVIDER_URL", "http://tms-line-provider:5002")
-    admin_token  = os.getenv("ADMIN_TOKEN", "TEST_TOKEN_12345")
+    # Write the mapping directly — no internal HTTP hop. Idempotent on tms_id,
+    # mirroring POST /api/line-tms/link.
+    with SessionLocal() as db:
+        row = db.query(LineTmsLink).filter(LineTmsLink.tms_id == tms_username).first()
+        if row:
+            row.line_id = line_user_id
+        else:
+            row = LineTmsLink(tms_id=tms_username, line_id=line_user_id)
+            db.add(row)
+        db.commit()
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{tms_base_url}/api/line-tms/link",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"tms_id": tms_username, "line_id": line_user_id},
-            timeout=10,
-        )
-
-    del _oauth_states[state]
-    del _pending_links[token]
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Failed to register: {resp.text}")
+    # One-time: burn the token + state so the link can't be replayed.
+    redis_client.delete(f"{_STATE_PREFIX}{state}")
+    redis_client.delete(f"{_PENDING_PREFIX}{token}")
 
     html = f"""
     <!DOCTYPE html>
