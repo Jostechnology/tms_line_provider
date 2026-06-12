@@ -38,6 +38,7 @@ TOKEN_TTL_SECONDS = 10 * 60
 
 _PENDING_PREFIX = "connect:pending:"   # one-time login token → link context
 _STATE_PREFIX = "connect:state:"       # oauth state → login token
+_STATUS_PREFIX = "connect:status:"     # login token → link result (for desktop polling)
 
 
 def _make_qr_base64(url: str) -> str:
@@ -225,10 +226,47 @@ def line_login(token: str):
                 Login with LINE
             </a>
         </div>
+        <script>
+            const _token = "{token}";
+            const _poll = setInterval(async () => {{
+                try {{
+                    const r = await fetch("/auth/line/status?token=" + encodeURIComponent(_token));
+                    if (!r.ok) return;
+                    const d = await r.json();
+                    if (d.status === "done") {{
+                        clearInterval(_poll);
+                        const who = d.display_name ? (d.display_name + " is now connected.")
+                                                   : "Your LINE account is connected.";
+                        document.querySelector(".card").innerHTML =
+                            '<div class="line-logo" style="background:#06C755;">'
+                            + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" width="32" height="32">'
+                            + '<path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>'
+                            + '<h1>Linked!</h1>'
+                            + '<p class="subtitle">' + who + ' You can close this window.</p>';
+                    }}
+                }} catch (e) {{ /* transient network error — keep polling */ }}
+            }}, 2500);
+        </script>
     </body>
     </html>
     """
     return HTMLResponse(content=html)
+
+
+# ─── Step 1.5: Desktop poll — has the phone finished linking yet? ─────────────
+
+@router.get("/status")
+def line_status(token: str):
+    """Lightweight poll target for the desktop login page.
+
+    Returns {"status": "done", "display_name": ...} once the phone completes the
+    OAuth flow, else {"status": "pending"}. No secrets — the token itself is the
+    capability, same as the login page that holds it.
+    """
+    raw = redis_client.get(f"{_STATUS_PREFIX}{token}")
+    if raw:
+        return json.loads(raw)
+    return {"status": "pending"}
 
 
 # ─── Step 2: LINE redirects back with code + state; we link and confirm ───────
@@ -292,6 +330,13 @@ def line_callback(code: str = None, state: str = None, error: str = None):
             row = LineTmsLink(tms_id=tms_username, line_id=line_user_id)
             db.add(row)
         db.commit()
+
+    # Signal the waiting desktop page (it polls /auth/line/status?token=...).
+    redis_client.setex(
+        f"{_STATUS_PREFIX}{token}",
+        TOKEN_TTL_SECONDS,
+        json.dumps({"status": "done", "display_name": display_name}),
+    )
 
     # One-time: burn the token + state so the link can't be replayed.
     redis_client.delete(f"{_STATE_PREFIX}{state}")

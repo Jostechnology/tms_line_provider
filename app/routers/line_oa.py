@@ -149,18 +149,28 @@ async def revoke_line_oa(body: TokenRequest):
 @router.post("/list", dependencies=[Depends(verify_required)])
 async def list_line_oas(body: CompanyRequest):
     rows = get_tokens_by_company(str(body.company_id))
+
+    oas = []
+    for row in rows:
+        # Live LINE lookup so the settings page can show *which* OA is connected
+        # (name + avatar), and whether the stored credentials are still valid.
+        info = get_line_bot_info(row.channel_access_token)
+        oas.append({
+            "token":          row.token,
+            "webhook_url":    f"{SERVICE_BASE_URL}/webhook/{row.token}",
+            "created_at":     row.created_at.isoformat() if row.created_at else None,
+            "oa_name":        info.get("displayName") if info else None,
+            "oa_basic_id":    info.get("basicId") if info else None,
+            "oa_picture_url": info.get("pictureUrl") if info else None,
+            # False ⇒ credentials no longer authenticate with LINE (re-sync needed).
+            "active":         info is not None,
+        })
+
     return {
         "success":    True,
         "company_id": body.company_id,
-        "oas": [
-            {
-                "token":       row.token,
-                "webhook_url": f"{SERVICE_BASE_URL}/webhook/{row.token}",
-                "created_at":  row.created_at.isoformat() if row.created_at else None,
-            }
-            for row in rows
-        ],
-        "count": len(rows),
+        "oas":        oas,
+        "count":      len(rows),
     }
 
 
