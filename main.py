@@ -2,9 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import CENTER_ACCESS_KEY, CENTER_URL
 from app.database import init_db
-from app.extensions import init_center_service
 from app.auth import verify_required
 
 from app.routers import line_oa, routers_webhook, tracking, recipients_router, line_tms_router
@@ -15,7 +13,6 @@ from app.repositories.delivery_log_repository import get_logs_by_tenant, get_log
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_center_service(CENTER_ACCESS_KEY, CENTER_URL)
     init_db()
     yield
 

@@ -3,21 +3,22 @@
 mock_publisher.py — Dev & test harness for the event consumer.
 
 Usage:
-    # Fire one specific event type (--tenant is the OA token):
-    python mock_publisher.py --event wo.started --tenant <oa_token>
+    # Fire one specific event type (--tenant is the company_id):
+    python mock_publisher.py --event wo.started --tenant <company_id>
 
     # Fire all event types in sequence (smoke test):
-    python mock_publisher.py --all --tenant <oa_token>
+    python mock_publisher.py --all --tenant <company_id>
 
     # List available event types:
     python mock_publisher.py --list
 
     # Override target base URL:
-    python mock_publisher.py --event eta.slipped --tenant <oa_token> --url http://localhost:5002
+    python mock_publisher.py --event eta.slipped --tenant <company_id> --url http://localhost:5002
 
 Env vars (can also be set in .env):
     CONSUMER_BASE_URL  — default: http://localhost:5002
-    MOCK_OA_TOKEN      — OA token to use as --tenant default
+    MOCK_COMPANY_ID    — company_id to use as --tenant default
+    ADMIN_TOKEN        — bearer token sent to authenticate as TMS
 """
 
 import argparse
@@ -32,13 +33,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CONSUMER_BASE_URL = os.getenv("CONSUMER_BASE_URL", "http://localhost:5002")
-MOCK_OA_TOKEN     = os.getenv("MOCK_OA_TOKEN", "")
+MOCK_COMPANY_ID   = os.getenv("MOCK_COMPANY_ID", "")
+ADMIN_TOKEN       = os.getenv("ADMIN_TOKEN", "")
 
 NOW = datetime.now(timezone.utc)
 
 
 # ─── Sample payloads ─────────────────────────────────────────────────────────
-# tenant_id is omitted — the consumer derives it from the OA token in the URL
+# tenant_id is omitted — the consumer derives it from the company_id in the URL
 
 def make_payloads() -> dict[str, dict]:
     return {
@@ -135,9 +137,9 @@ def make_payloads() -> dict[str, dict]:
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def send_event(payload: dict, base_url: str, oa_token: str) -> None:
+def send_event(payload: dict, base_url: str, company_id: str) -> None:
     event_type = payload.get("event_type", "unknown")
-    url = f"{base_url}/api/events/{oa_token}"
+    url = f"{base_url}/api/events/{company_id}"
 
     print(f"\n{'─'*60}")
     print(f"  Firing: {event_type}")
@@ -149,7 +151,10 @@ def send_event(payload: dict, base_url: str, oa_token: str) -> None:
         resp = requests.post(
             url,
             json=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {ADMIN_TOKEN}",
+            },
             timeout=10,
         )
         status_symbol = "✓" if resp.status_code < 300 else "✗"
@@ -164,7 +169,7 @@ def send_event(payload: dict, base_url: str, oa_token: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Mock event publisher — fires trip events scoped to an OA token."
+        description="Mock event publisher — fires trip events scoped to a company_id."
     )
     parser.add_argument(
         "--event", "-e",
@@ -187,9 +192,9 @@ def main():
     )
     parser.add_argument(
         "--tenant",
-        default=MOCK_OA_TOKEN,
+        default=MOCK_COMPANY_ID,
         required=False,
-        help="OA token — identifies which company and OA to fire events for",
+        help="company_id — identifies which company to fire events for",
     )
 
     args = parser.parse_args()
@@ -202,12 +207,11 @@ def main():
         return
 
     if not args.tenant and not args.list:
-        print("Error: --tenant <oa_token> is required")
-        print("Get your OA token from: POST /api/line-oa/list")
+        print("Error: --tenant <company_id> is required")
         sys.exit(1)
 
     if args.all:
-        print(f"Firing all {len(payloads)} event types to OA token {args.tenant[:16]}… at {args.url}")
+        print(f"Firing all {len(payloads)} event types to company_id {args.tenant} at {args.url}")
         for payload in payloads.values():
             send_event(payload, args.url, args.tenant)
         print("\nDone.")
