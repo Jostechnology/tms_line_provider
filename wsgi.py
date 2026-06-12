@@ -1,4 +1,4 @@
-from app.app import app
+from main import app
 
-if __name__ == '__main__':
-    app.run("0.0.0.0", "5002")
+if __name__ == "__main__":
+    app.run("app.main:app", host="0.0.0.0", port=5002, reload=True)

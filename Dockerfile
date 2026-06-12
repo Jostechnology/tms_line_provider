@@ -11,4 +11,4 @@ COPY . /
 
 EXPOSE 5002
 
-ENTRYPOINT ["gunicorn", "--config", "gunicorn_config.py", "--log-level", "info", "--access-logfile", "-", "wsgi:app"]
+ENTRYPOINT ["gunicorn", "--config", "gunicorn_config.py", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-", "wsgi:app"]   
